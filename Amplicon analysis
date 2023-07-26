@@ -1,1 +1,113 @@
+#Raw amplicon sequence processing in DADA2
+
+library("dada2"); packageVersion("dada2")
+
+path <- "sequence_files"
+list.files(path)
+
+# Forward and reverse fastq filenames have format: SAMPLENAME_R1_001.fastq and SAMPLENAME_R2_001.fastq
+fnFs <- sort(list.files(path, pattern="_R1_001.fastq", full.names = TRUE))
+fnRs <- sort(list.files(path, pattern="_R2_001.fastq", full.names = TRUE))
+# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
+
+#We start by visualizing the quality profiles of the forward reads:
+plotQualityProfile(fnFs[1:2])
+
+#Now we visualize the quality profile of the reverse reads:
+plotQualityProfile(fnRs[1:2])
+
+#Filter and trim
+
+#Assign the filenames for the filtered fastq.gz files.
+# Place filtered files in filtered/ subdirectory
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+names(filtFs) <- sample.names
+names(filtRs) <- sample.names
+
+#We’ll use standard filtering parameters: maxN=0 (DADA2 requires no Ns), truncQ=2, rm.phix=TRUE and maxEE=2. The maxEE parameter sets the maximum number of “expected errors” allowed in a read, which is a better filter than simply averaging quality scores.
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(260,200),
+              maxN=0, maxEE=c(8,8), truncQ=2, rm.phix=TRUE,
+              compress=TRUE, multithread=TRUE) # On Windows set multithread=FALSE
+head(out)
+
+#Learn the Error Rates
+errF <- learnErrors(filtFs, multithread=TRUE)
+errR <- learnErrors(filtRs, multithread=TRUE)
+errF
+errR
+plotErrors(errF, nominalQ=TRUE)
+plotErrors(errR, nominalQ=TRUE)
+
+#Sample Inference
+dadaFs <- dada(filtFs, err=errF, multithread=TRUE)
+dadaRs <- dada(filtRs, err=errR, multithread=TRUE)
+#Inspecting the returned dada-class object:
+dadaFs[[1]]
+
+#Merge paired reads
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE, justConcatenate=FALSE)
+# Inspect the merger data.frame from the first sample
+head(mergers[[1]])
+
+#Construct sequence table
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab)))
+
+#Remove chimeras
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+#Percentage of non-chimeric sequences . should be >50%
+sum(seqtab.nochim)/sum(seqtab)
+
+#Track reads through the pipeline
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample.names
+head(track)
+
+#Assign taxonomy
+taxa <- assignTaxonomy(seqtab.nochim, "/path_to.../silva_nr_v132_train_set.fa.gz", multithread=TRUE)
+
+#using non chimaera sequeces in dada2 seqtab object, giving the sequences name as ASV and extracting OTU sequences, abundance and taxonomy
+
+#seq table
+
+asv_seqs <- colnames(seqtab.nochim)
+asv_headers <- vector(dim(seqtab.nochim)[2], mode="character")
+
+#fasta header as ASV_
+
+for (i in 1:dim(seqtab.nochim)[2]) {
+asv_headers[i] <- paste(">ASV", i, sep="_")
+}
+
+#ASV sequences
+
+asv_fasta <- c(rbind(asv_headers, asv_seqs))
+
+#ASV abundance
+
+asv_otu <- t(seqtab.nochim)
+row.names(asv_otu) <- sub(">", "", asv_headers)
+
+#ASV taxonomy
+
+asv_tax <- taxa
+row.names(asv_tax) <- sub(">", "", asv_headers)
+
+#merging abundance and tax table
+
+OTU_TAX_table <- merge(asv_otu, asv_tax, by=0)
+
+#writing out output files
+
+write.table(OTU_TAX_table, "ASV_table.csv", sep=",", quote=F, col.names=NA)
+
+
 
