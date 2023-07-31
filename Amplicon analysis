@@ -111,4 +111,287 @@ write.table(OTU_TAX_table, "ASV_table.csv", sep=",", quote=F, col.names=NA)
 
 ###ANALYSIS PIPELINES###
 
+##NMDS plots
+abund_table<-read.csv("path_to_file.csv",row.names=1,check.names=FALSE)
+#Transpose the data to have sample names on rows
+abund_table<-t(abund_table)
+#meta_table<-read.csv("path_to_file.csv",row.names=1,check.names=FALSE)
+#Just a check to ensure that the samples in meta_table are in the same order as in abund_table
+#meta_table<-meta_table[rownames(abund_table),]
+
+#Get grouping information
+grouping_info<-data.frame(row.names=rownames(abund_table),t(as.data.frame(strsplit(rownames(abund_table),"_"))))
+library(vegan)
+#Get MDS stats
+sol<-metaMDS(abund_table,distance = "bray", k = 2, trymax = 50)
+ 
+##ANOSIM test
+#make community matrix - extract columns with abundance information, turn data frame into matrix
+com = abund_table[,4:ncol(abund_table)]
+m_com = as.matrix(com)
+ano = anosim(m_com, grouping_info[,2], distance = "bray", permutations = 9999)
+ano
+
+#Make a new data frame, and put month, site, and sample_type information there, to be useful for coloring, and shape of points
+NMDS=data.frame(x=sol$point[,1],y=sol$point[,2],Site=as.factor(grouping_info[,1]),Substrate=as.factor(grouping_info[,2]),activity=as.factor(grouping_info[,3]))
+#Get spread of points based on site
+#plot.new()
+#ord<-ordiellipse(sol, as.factor(grouping_info[,2]) ,display = "sites", kind ="sd", conf = 0.95, label = T)
+#dev.off()
+#Data frame df_ell contains values to show ellipses. It is calculated with function veganCovEllipse which is hidden in vegan package. This function is applied to each level of NMDS (group) and it uses also function cov.wt to calculate covariance matrix.
+#veganCovEllipse<-function (cov, center = c(0, 0), scale = 1, npoints = 100) 
+#{
+#  theta <- (0:npoints) * 2 * pi/npoints
+#  Circle <- cbind(cos(theta), sin(theta))
+#  t(center + scale * t(Circle %*% chol(cov)))
+#}
+ 
+#Generate ellipse points
+#df_ell <- data.frame()
+#for(g in levels(NMDS$Retrieval)){
+#  if(g!="" && (g %in% names(ord))){
+ 
+#    df_ell <- rbind(df_ell, cbind(as.data.frame(with(NMDS[NMDS$Retrieval==g,],
+                                                     #veganCovEllipse(ord[[g]]$cov,ord[[g]]$center,ord[[g]]$scale)))
+#                                  ,Sample_Type=g), multivariate=FALSE)
+#  }
+#}
+#Generate mean values from NMDS plot grouped on months
+#NMDS.mean=aggregate(NMDS[,1:2],list(group=NMDS$Retrieval),mean)
+#Now do the actual plotting
+library(ggplot2)
+ 
+shape_values<-seq(1,11)
+ 
+p<-ggplot(data=NMDS,aes(x,y,colour=Site,shape=Substrate))+theme(text=element_text(size=14))+
+  xlab(" ")+
+  ylab(" ")+
+  ggtitle(" ")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+#p<-p+ annotate("text",x=NMDS.mean$x,y=NMDS.mean$y,label=NMDS.mean$group,size=6)
+#p<-p+ geom_path(data=df_ell, aes(x=NMDS1, y=NMDS2), size=2, linetype=2)
+p<-p+geom_point(aes(), size=4)
+#+geom_polygon(aes(fill=Sample_Type))
+p
+pdf("NMDSfile.pdf",height=6,width=6)
+print(p)
+dev.off()
+
+#SRS (scaling with ranked subsampling - alternative to rarefying prior to determining diversity indices) 
+
+data_table<-read.csv("path_to_file.csv")
+
+#Shiny app for the determination of Cmin for scaling with ranked subsampling (SRS).
+library(SRS)
+SRS.shiny.app(data_table)
+
+#SRS main input
+SRS_data_table=SRS(data_table, 1222, set_seed = TRUE, seed = 1)
+
+write.table(SRS_data_table, "path_to_file.txt", sep="\t")
+
+#handoff to vegan diversity indices analysis
+
+##diversity indices value generating (preliminary analysis steps)
+library(vegan)
+
+#Transpose the data to have sample names on rows
+otu_table<-t(data_table)
+data(otu_table)
+H<-diversity(otu_table)
+simp<-diversity(otu_table, "simpson")
+invsimp<-diversity(otu_table, "inv")
+## Unbiased Simpson (Hurlbert 1971, eq. 5) with rarefy:
+unbias.simp <- rarefy(otu_table, 2) - 1
+## Fisher alpha
+alpha <- fisher.alpha(otu_table)
+## Species richness (S) and Pielou's evenness (J):
+S <- specnumber(otu_table)
+J <- H/log(S)
+## Plot all
+pairs(cbind(H, S, J), pch="+", col="blue")
+pairs(cbind(H, simp, invsimp, unbias.simp, alpha), pch="+", col="blue")
+alpha
+write.table(S, "path_to_file.txt", sep="\t")
+
+#Plot data
+##Boxplots of diversity indices values
+library(patchwork)
+library(tidyverse)
+library(dplyr)
+DNAshannon_boxplot_data<-read.csv("path_to_file.csv",row.names=1,check.names=FALSE)
+DNArichness_boxplot_data<-read.csv("path_to_file.csv",row.names=1,check.names=FALSE)
+DNAevenness_boxplot_data<-read.csv("path_to_file.csv",row.names=1,check.names=FALSE)
+
+RNAshannon_boxplot_data<-read.csv("path_to_file.csv",row.names=1,check.names=FALSE)
+RNArichness_boxplot_data<-read.csv("path_to_file.csv",row.names=1,check.names=FALSE)
+RNAevenness_boxplot_data<-read.csv("path_to_file.csv",row.names=1,check.names=FALSE)
+
+a<- DNArichness_boxplot_data%>% 
+  mutate(substrate = as.factor(substrate))%>%
+  ggplot(mapping=aes(x=sample_type,y=richness,fill=substrate))+theme(text=element_text(size=12))+
+  geom_boxplot()+
+  xlab(" ")+
+  ylab(" ")+
+  ggtitle("DNA ASV Richness")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+
+a<-a+geom_point(aes(), size=1)
+a<-a+theme(axis.text.x=element_text(angle=70,vjust=0.99,hjust=1))
+
+b<- DNAevenness_boxplot_data%>% 
+  mutate(substrate = as.factor(substrate))%>%
+  ggplot(mapping=aes(x=sample_type,y=evenness,fill=substrate))+theme(text=element_text(size=12))+
+  geom_boxplot()+
+  xlab(" ")+
+  ylab(" ")+
+  ggtitle("DNA ASV Evenness")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+
+b<-b+geom_point(aes(), size=1)
+b<-b+theme(axis.text.x=element_text(angle=70,vjust=0.99,hjust=1))
+
+c<- DNAshannon_boxplot_data%>% 
+  mutate(substrate = as.factor(substrate))%>%
+  ggplot(mapping=aes(x=sample_type,y=shannon,fill=substrate))+theme(text=element_text(size=12))+
+  geom_boxplot()+
+  xlab(" ")+
+  ylab(" ")+
+  ggtitle("DNA Shannon Diversity")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+
+c<-c+geom_point(aes(), size=1)
+c<-c+theme(axis.text.x=element_text(angle=70,vjust=0.99,hjust=1))
+
+d<- RNArichness_boxplot_data%>% 
+  mutate(substrate = as.factor(substrate))%>%
+  ggplot(mapping=aes(x=sample_type,y=richness,fill=substrate))+theme(text=element_text(size=12))+
+  geom_boxplot()+
+  xlab(" ")+
+  ylab(" ")+
+  ggtitle("RNA ASV Richness")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+
+d<-d+geom_point(aes(), size=1)
+d<-d+theme(axis.text.x=element_text(angle=70,vjust=0.99,hjust=1))
+
+e<- RNAevenness_boxplot_data%>% 
+  mutate(substrate = as.factor(substrate))%>%
+  ggplot(mapping=aes(x=sample_type,y=evenness,fill=substrate))+theme(text=element_text(size=12))+
+  geom_boxplot()+
+  xlab(" ")+
+  ylab(" ")+
+  ggtitle("RNA ASV Evenness")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+
+e<-e+geom_point(aes(), size=1)
+e<-e+theme(axis.text.x=element_text(angle=70,vjust=0.99,hjust=1))
+
+f<- RNAshannon_boxplot_data%>% 
+  mutate(substrate = as.factor(substrate))%>%
+  ggplot(mapping=aes(x=sample_type,y=shannon,fill=substrate))+theme(text=element_text(size=12))+
+  geom_boxplot()+
+  xlab(" ")+
+  ylab(" ")+
+  ggtitle("RNA Shannon Diversity")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+
+f<-f+geom_point(aes(), size=1)
+f<-f+theme(axis.text.x=element_text(angle=70,vjust=0.99,hjust=1))
+
+
+(a | b | c)/ (d | e | f)
+pdf("file.pdf",width=16,height=9)
+print(((a | b | c)/ (d | e | f)) + plot_layout(guides = 'collect'))
+dev.off()
+
+##Taxa plot
+abund_table<-read.csv("path_to_file.csv",row.names=1,check.names=FALSE)
+#Transpose the data to have sample names on rows
+abund_table<-t(abund_table)
+#meta_table<-read.csv("path_to_file.csv",row.names=1,check.names=FALSE)
+#Just a check to ensure that the samples in meta_table are in the same order as in abund_table
+#meta_table<-meta_table[rownames(abund_table),]
+#Get grouping information
+grouping_info<-data.frame(row.names=rownames(abund_table),t(as.data.frame(strsplit(rownames(abund_table),"_"))))
+#Apply proportion normalisation
+x<-abund_table/rowSums(abund_table)
+x<-x[,order(colSums(x),decreasing=TRUE)]
+ 
+#Extract list of top N Taxa
+N<-25
+taxa_list<-colnames(x)[1:N]
+#remove "__Unknown__" and add it to others
+#taxa_list<-taxa_list[!grepl("Unknown",taxa_list)]
+#N<-length(taxa_list)
+ 
+#Generate a new table with everything added to Others
+#new_x<-data.frame(x[,colnames(x) %in% taxa_list],Others=rowSums(x[,!colnames(x) %in% taxa_list]))
+ 
+ 
+#You can change the Type=grouping_info[,1] should you desire any other grouping of panels
+df<-NULL
+for (i in 1:dim(x)[2]){
+  tmp<-data.frame(row.names=NULL,Sample=rownames(x),Taxa_Class=rep(colnames(x)[i],dim(x)[1]),Value=x[,i],Type=grouping_info[,1])
+  if(i==1){df<-tmp} else {df<-rbind(df,tmp)}
+}
+colours <- c("#F0A3FF", "#0075DC", "#993F00","#4C005C","#2BCE48","#FFCC99","#808080","#94FFB5","#8F7C00","#9DCC00","#C20088","#003380","#FFA405","#FFA8BB");
+
+#,"#426600","#FF0010","#5EF1F2","#00998F","#740AFF","#990000","#FFFF00","#FF6666","#00FF00","#6666CC","#99CCCC"
+
+#more colors newnew- ,"#FF6666","#00FF00","#0000FF"
+#more colors- "#F0A3FF", "#0075DC", "#993F00","#4C005C","#2BCE48","#FFCC99","#808080","#94FFB5","#8F7C00","#9DCC00","#C20088","#003380","#FFA405", 
+library(ggplot2)
+p<-ggplot(df,aes(Sample,Value,fill=Taxa_Class))+geom_bar(stat="identity")+facet_grid(. ~ Type, drop=TRUE,scale="free",space="free_x")
+p<-p+scale_fill_manual(values=colours[1:(N)])
+p<-p+theme_bw()+ylab("Proportion")
+p<-p+ scale_y_continuous(expand = c(0,0))+theme(strip.background = element_rect(fill="gray85"))+theme(panel.margin = unit(0.3, "lines"))
+p<-p+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+
+p
+pdf("file.pdf",height=4,width=20)
+print(p)
+dev.off()
+
+##Indicator species analysis
+#install.packages('indicspecies')
+#install.packages('labdsv')
+library(indicspecies)
+library(labdsv)
+abund_table<-read.csv("path_to_file.csv", row.names=1, check.names=FALSE)
+#Transpose the data to have sample names on rows
+abund_table<-t(abund_table)
+groups = c(rep(1, 20), rep(2, 24), rep(3, 24), rep(4, 17))
+groups
+inddval = multipatt(abund_table, groups, control = how(nperm=999))
+summary(inddval, indvalcomp=TRUE)
+
+#Surf plot Levins niche breadth
+levins=read.csv("path_to_file.csv")
+fig <- plot_ly(z = ~levins, colorscale='Jet')
+fig <- fig %>% add_surface()
+
+fig
+
+##boxplots of rna/dna ratios
+library(patchwork)
+library(tidyverse)
+library(dplyr)
+RNADNAratio_boxplot_data<-read.csv("path_to_file.csv",row.names=1,check.names=FALSE)
+logratio<-log10(RNADNAratio_boxplot_data$ratio)
+a<- RNADNAratio_boxplot_data%>% 
+#  mutate(substrate = as.factor(substrate))%>%
+  ggplot(mapping=aes(x=substrate,y=logratio,fill=substrate))+theme(text=element_text(size=12))+
+  geom_boxplot()+
+  xlab(" ")+
+  ylab(" ")+
+  ggtitle("RNA/DNA Ratio")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+
+a<-a+geom_point(aes(), size=1, position = position_jitterdodge())
+a<-a+theme(axis.text.x=element_text(angle=70,vjust=0.99,hjust=1))
+
+pdf("file.pdf",width=9.5,height=5)
+print(a)
+dev.off()
 
