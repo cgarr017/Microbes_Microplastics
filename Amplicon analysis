@@ -109,5 +109,6 @@ OTU_TAX_table <- merge(asv_otu, asv_tax, by=0)
 
 write.table(OTU_TAX_table, "ASV_table.csv", sep=",", quote=F, col.names=NA)
 
+###ANALYSIS PIPELINES###
 
 
