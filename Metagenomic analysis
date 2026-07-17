@@ -1,0 +1,240 @@
+#trim raw metagenomic fastq files and qc for 30 phred score (will want to also run at 25 and 35)
+for FileName in *_R1_001.fastq.gz; do stem=`ls $FileName | cut -d"_" -f1,2,3`; ~/scripts/GitHub/trimgalore/TrimGalore-0.6.10/trim_galore --retain_unpaired --fastqc -q 30 --paired -o ~/temporary/Users/ceg/Shostak_trimmed_fq/ $stem"_R1_001.fastq.gz" $stem"_R2_001.fastq.gz"; done
+
+for FileName in *_1.fastq.gz; do stem=`ls $FileName | cut -d"_" -f1,2,3`; ~/scripts/GitHub/trimgalore/TrimGalore-0.6.10/trim_galore --retain_unpaired --fastqc -q 30 --paired -o ~/temporary/Users/ceg/plastic_degrader_genomes/global/ $stem"_R1_001.fastq.gz" $stem"_R2_001.fastq.gz"; done
+
+
+#fastqc of raw reads
+parallel --plus -j 1 fastqc --paired -o /**output file location here** {} {/_R1_/_R2_} ::: /**input file location**/*_R1_001.fastq.gz 
+
+#compare fastqc.html profiles (scp to desktop, pick (**sample names here**)
+(/**fastq html file location**)
+
+
+
+#cat unpaired
+cat **_R1_unpaired.fq **_R2_unpaired.fq > **_unpaired.fq
+
+#spades assembly
+~/scripts/GitHub/spAdes/SPAdes-3.13.0-Linux/bin/
+python metaspades.py -1 ~/**_L001_R1_001_val_1.fq.gz -2 ~/**_L001_R2_001_val_2.fq.gz -s ~/**_unpaired.fq -o ~/**/ -t 23
+
+#get quast report
+python ~/scripts/GitHub/quast/metaquast.py /**contigs.fasta --threads 24
+
+
+#MaxBin
+
+perl run_MaxBin.pl -contig ~/**contigs.fasta -reads ~/**.fa -reads2 ~/**.fa -out ~/** -thread 23 -min_contig_length 500
+
+#concoct- first need bam files, run bowtie2 to generate bam files
+
+#first build index runtime 1min(run from directory created for this – in this case it’s /media/geomicroecu/RAID-1/cody/bowtie2_out/
+
+bowtie2-build ~/**contigs.fasta ** -p 23
+
+
+#next align reads to create sam files still run from the bowtie2_out directory)
+
+bowtie2 -x ** -1 ~/**.fq.gz -2 ~/**.fq.gz -U ~/**_unpaired.fq -S **.sam -p 23
+
+samtools view -bS **.sam > **.bam -@ 23
+
+# Use samtools sort to convert the BAM file to a sorted BAM file.
+
+samtools sort **.bam -o **.sorted.bam -@ 23
+
+#index bam file
+
+samtools index **.sorted.bam -@ 23
+
+#CONCOCT- run from new directory /**/concoct_out
+
+# cut up contigs into smaller parts
+
+python ~/scripts/GitHub/CONCOCT/scripts/cut_up_fasta.py ~/**contigs.fasta -c 10000 -o 0 --merge_last -b **_10K.bed > **_10K.fa
+
+#generate coverage depth table 
+
+python ~/scripts/GitHub/CONCOCT/scripts/concoct_coverage_table.py **_10K.bed ~/**.sorted.bam > **coverage_table.tsv
+
+#run concoct from ~/miniconda3/envs/concoct_env/bin
+##go through next few steps one sample at a time
+
+./concoct --composition_file ~/**contigs_10K.fa --coverage_file ~/**coverage_table.tsv -b ~/**concoct_out/ -t 23
+
+
+
+#merge_cutup step
+
+python ~/scripts/GitHub/CONCOCT/scripts/merge_cutup_clustering.py ~/**/clustering_gt1000.csv > ~/**/clustering_merged.csv
+
+#mkdir for next step
+
+mkdir **fasta_bins
+
+#extract bins as individual fasta
+
+python ~/scripts/GitHub/CONCOCT/scripts/extract_fasta_bins.py ~/**contigs.fasta ~/**/clustering_merged.csv --output_path ~/**fasta_bins
+
+#Now do metabat
+#mkdir for each sample- mkdir /**/metabat_out/**
+ Generate a depth file from BAM files runtime 3 min
+jgi_summarize_bam_contig_depths --outputDepth ~/**depth.txt ~/**.sorted.bam
+ 
+metabat2 -t 23 -m 1500 -i ~/**/contigs.fasta -a ~/**depth.txt -o ~/**
+
+#DAS tool
+
+#mkdir for each subset of maxbin sample files
+
+mkdir /**
+
+#scp each fasta file from each sample from general maxbin_out to specific subset folder for .tsv file creation in next step (.001, .002, etc)
+
+scp **.fasta ~/**/maxbin_out/**_fastas/
+
+#create .tsv files
+
+/scripts/GitHub/DAS_Tool/src/Fasta_to_Scaffolds2Bin.sh -i ~/**maxbin_out/**/ -e fasta > ~/**maxbin.scaffolds2bin.tsv
+
+/scripts/GitHub/DAS_Tool/src/Fasta_to_Scaffolds2Bin.sh -i ~/**concoct_out/**/ -e fa > ~/**concoct.scaffolds2bin.tsv
+
+/scripts/GitHub/DAS_Tool/src/Fasta_to_Scaffolds2Bin.sh -i ~/**metabat_out/**/ -e fa > ~/**metabat.scaffolds2bin.tsv
+
+#Run dastool (from dastool_out folder)
+
+DAS_Tool -i **maxbin.scaffolds2bin.tsv,**concoct.scaffolds2bin.tsv,**metabat.scaffolds2bin.tsv -l maxbin,concoct,metabat -c ~/**/contigs.fasta -o ~/**dasout --write_bins 1 --write_bin_evals 0 --threads 23 --search_engine blast
+
+#CheckM – first change all files in dasout bin folder to .fa
+
+#then run checkm lineage workflow
+
+checkm lineage_wf -t 23 -x fa /** /**
+
+#assess checkm results for contamination and completeness
+
+checkm qa /**lineage.ms /**lineage
+
+
+
+
+
+#Magic Lamp
+YfGenie.py --hmm --gff --gc -d HMMs_dir -y genes.tsv -a GCF_023585845.1 -o GCF_023585845.1 -t 16
+
+#GTDB-tk phylogenetic predictions
+Run through Kbase UI https://www.kbase.us/
+
+#Read recruitment via anvi-profile
+https://anvio.org/help/main/programs/anvi-profile/
+
+#antiSMASH
+https://github.com/antismash/antismash
+
+#R code for making plots
+##Boxplot taxaplots abund of PE, GL and SW, temporal recruitment
+library(patchwork)
+library(tidyverse)
+library(dplyr)
+
+a_boxplot_data<-read.csv("/Users/codygarrison/Downloads/MAGs_read_recruit/Saprospiraceae_novel_MAGs_substrate_recruitment_abund.csv",row.names=1,check.names=FALSE)
+b_boxplot_data<-read.csv("/Users/codygarrison/Downloads/MAGs_read_recruit/Pseudomonadales_novel_MAGs_substrate_recruitment_abund.csv",row.names=1,check.names=FALSE)
+c_boxplot_data<-read.csv("/Users/codygarrison/Downloads/MAGs_read_recruit/Pseudomonadales_2_novel_MAGs_substrate_recruitment_abund.csv",row.names=1,check.names=FALSE)
+d_boxplot_data<-read.csv("/Users/codygarrison/Downloads/MAGs_read_recruit/Saccharimonadales_novel_MAGs_substrate_recruitment_abund.csv",row.names=1,check.names=FALSE)
+e_boxplot_data<-read.csv("/Users/codygarrison/Downloads/MAGs_read_recruit/Paceibacteria_MAGs_substrate_recruitment_abund.csv",row.names=1,check.names=FALSE)
+
+
+a<- a_boxplot_data%>% 
+  ggplot(mapping=aes(x=substrate,y=abund,color=substrate))+theme(text=element_text(size=16))+
+  geom_boxplot(size=1.5)+
+  xlab(" ")+
+  ylab("Relative Abundance")+
+  ggtitle("Saprospiraceae_novel")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+
+a<-a+theme(axis.text.x=element_text(angle=35,vjust=0.99,hjust=1))
+
+a
+b<- b_boxplot_data%>% 
+  ggplot(mapping=aes(x=substrate,y=abund,color=substrate))+theme(text=element_text(size=16))+
+  geom_boxplot(size=1.5)+
+  xlab(" ")+
+  ylab("Relative Abundance")+
+  ggtitle("Pseudomonadales_novel")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+
+b<-b+theme(axis.text.x=element_text(angle=35,vjust=0.99,hjust=1))
+
+c<- c_boxplot_data%>% 
+  ggplot(mapping=aes(x=substrate,y=abund,color=substrate))+theme(text=element_text(size=16))+
+  geom_boxplot(size=1.5)+
+  xlab(" ")+
+  ylab("Relative Abundance")+
+  ggtitle("Pseudomonadales_2_novel")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+
+c<-c+theme(axis.text.x=element_text(angle=35,vjust=0.99,hjust=1))
+
+d<- d_boxplot_data%>% 
+  ggplot(mapping=aes(x=substrate,y=abund,color=substrate))+theme(text=element_text(size=16))+
+  geom_boxplot(size=1.5)+
+  xlab(" ")+
+  ylab("Relative Abundance")+
+  ggtitle("Saccharimonadales_novel")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+
+d<-d+theme(axis.text.x=element_text(angle=35,vjust=0.99,hjust=1))
+
+e<- e_boxplot_data%>% 
+  ggplot(mapping=aes(x=substrate,y=abund,color=substrate))+theme(text=element_text(size=16))+
+  geom_boxplot(size=1.5)+
+  xlab(" ")+
+  ylab("Relative Abundance")+
+  ggtitle("Rhodobacteraceae")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+
+e<-e+theme(axis.text.x=element_text(angle=35,vjust=0.99,hjust=1))
+
+
+pdf("MM_metaG_substrate_recruitment_abund_PET_specific.pdf",width=9.5,height=4)
+
+print((a | b) + plot_layout(guides = 'collect'))
+dev.off()
+
+pdf("MM_metaG_substrate_recruitment_abund_PE_specific.pdf",width=9.5,height=8)
+
+print(((a | b)/(c | d)) + plot_layout(guides = 'collect'))
+dev.off()
+
+**bubble plot
+library(tidyverse)
+MM_gene_bubble<-read.csv("/Users/codygarrison/Downloads/MM_lithogenie_carbon_oxygen_plotting_for_R_coverage.csv",row.names=1,check.names=FALSE)
+p<-ggplot(MM_gene_bubble, aes(x = substrate, y = gene, size = Normalized_gene_coverage), alpha=0.7) +
+  geom_point(aes(color=gene)) +
+  scale_size_area(max_size = 10) + 
+  labs(x=" ", y=" ")
+p<-p+theme(text=element_text(size=14.5))
+p
+pdf("MM_lithogenie_polymer_bubbleplot_coverage_carbon_oxygen_for_maunscript.pdf",width=16,height=9)
+print(p)
+dev.off()
+
+*BGC plot
+library(tidyverse)
+library(dplyr)
+library(stringr)
+
+BGC_data<-read.csv("/Users/codygarrison/Downloads/BGC_counts_for_R.csv",row.names=1,check.names=FALSE)
+BGC_data$BGC2 <- str_wrap(BGC_data$BGC, width = 100)
+p<-ggplot(data=BGC_data) +
+  geom_bar(aes(x=BGC2,y=Number_predicted_per_MAG,fill=Substrate,color=Substrate), stat = "identity",position = position_dodge()) +
+  coord_flip()+
+  
+  labs(x="Biosynthetic Gene Cluster Type", y="Number Predicted per MAG")
+p<-p+theme(text=element_text(size=20))
+p
+pdf("MM_BGC_barplot.pdf",width=23,height=13)
+print(p)
+dev.off()
+
